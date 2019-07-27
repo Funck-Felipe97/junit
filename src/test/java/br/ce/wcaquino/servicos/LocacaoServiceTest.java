@@ -23,7 +23,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ErrorCollector;
 import org.junit.rules.ExpectedException;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
 
 import br.ce.wcaquino.dao.LocacaoDao;
 import br.ce.wcaquino.entidades.Filme;
@@ -35,7 +39,17 @@ import br.ce.wcaquino.utils.DataUtils;
 
 public class LocacaoServiceTest {
 
+	@InjectMocks
 	private LocacaoService service;
+
+	@Mock
+	private LocacaoDao locacaoDao;
+
+	@Mock
+	private SPCService spcService;
+
+	@Mock
+	private EmailService emailService;
 
 	@Rule
 	public ErrorCollector error = new ErrorCollector();
@@ -45,9 +59,7 @@ public class LocacaoServiceTest {
 
 	@Before
 	public void stup() {
-		System.out.println("Before");
-		service = new LocacaoService();
-		service.setDao(Mockito.mock(LocacaoDao.class));
+		MockitoAnnotations.initMocks(this);
 	}
 
 	@After
@@ -211,6 +223,67 @@ public class LocacaoServiceTest {
 
 		// verificação
 		assertThat(resultado.getDataRetorno(), caiEm(Calendar.MONDAY));
+	}
+
+	@Test
+	public void naoDeveAlugarFilmeUsuarioNegativado() throws FilmeSemEstoqueException, LocadoraException {
+		// cenário
+		Usuario usuario = new Usuario("Usuario 1");
+		List<Filme> filmes = Arrays.asList(new Filme("Filme 1", 2, 4.0));
+
+		exception.expect(LocadoraException.class);
+		exception.expectMessage("Usuario negativado");
+
+		Mockito.when(spcService.usuarioNegativado(usuario)).thenReturn(true);
+
+		// ação
+		service.alugarFilme(usuario, filmes);
+
+		// verificação
+		Mockito.verify(spcService).usuarioNegativado(usuario);
+	}
+
+	@Test
+	public void deveNotificarAtrasosLocacao() throws FilmeSemEstoqueException, LocadoraException {
+		// cenário
+		Usuario usuario = new Usuario("Usuario 1");
+		Usuario usuario2 = new Usuario("Usuario 2");
+		List<Filme> filmes = Arrays.asList(new Filme("Filme 1", 2, 4.0));
+		Locacao locacao = service.alugarFilme(usuario, filmes);
+		locacao.setDataRetorno(DataUtils.adicionarDias(new Date(), -2));
+
+		// ação
+		Mockito.when(locacaoDao.obterLocacoesAtrasadas()).thenReturn(Arrays.asList(locacao));
+		service.notificarAtrasos();
+
+		// verificação
+		Mockito.verify(emailService).notificarAtrasos(usuario);
+		// Mockito.verify(service.getEmailService(),
+		// Mockito.times(2)).notificarAtrasos(usuario); verifica a quantidade de vezes
+		// Mockito.verify(service.getEmailService(),
+		// Mockito.times(2)).notificarAtrasos(Mockito.any(Usuario.class)); verifica se
+		// houve pelo menos 2 chamadas para qualquer tipo de usuário
+		Mockito.verify(emailService, Mockito.never()).notificarAtrasos(usuario2); // verifica se o método do mock não
+																					// foi chamado para o usuário 2
+		Mockito.verifyNoMoreInteractions(emailService); // verifica se não houve mais chamadas no método de envio de
+														// email
+	}
+
+	// Capturando argumentos
+	@Test
+	public void deveProrrogarLocacao() throws FilmeSemEstoqueException, LocadoraException {
+		// cenário
+		Usuario usuario = new Usuario("Usuario 1");
+		List<Filme> filmes = Arrays.asList(new Filme("Filme 1", 2, 4.0), new Filme("Filme 2", 2, 4.0),
+				new Filme("Filme 3", 2, 4.0), new Filme("Filme 4", 2, 4.0), new Filme("Filme 5", 2, 4.0));
+		Locacao locacao = service.alugarFilme(usuario, filmes);
+		
+		service.prorrogarLocacao(locacao, 3);
+		
+		ArgumentCaptor<Locacao> argumentCaptor = ArgumentCaptor.forClass(Locacao.class);
+		Mockito.verify(locacaoDao).salvar(argumentCaptor.capture());
+		Locacao locacao2 = argumentCaptor.capture();
+		
 	}
 
 }
